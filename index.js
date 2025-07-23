@@ -122,6 +122,65 @@ async function run() {
         });
     });
 
+
+    app.get("/users/profile", verifyFirebaseToken, async (req, res) => {
+  try {
+    const email = req.firebaseUser.email;
+    const user = await userCollection.findOne({ email }, { projection: { _id: 0 } });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+    app.put("/users/profile", verifyFirebaseToken, async (req, res) => {
+  try {
+    const email = req.firebaseUser.email;
+    const {
+      name,
+      avatar,
+      district,
+      upazila,
+      bloodGroup,
+    } = req.body;
+
+    if (!name || !district || !upazila || !bloodGroup) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const updateDoc = {
+      $set: {
+        name,
+        avatar,
+        district,
+        upazila,
+        bloodGroup,
+        updatedAt: new Date(),
+      },
+    };
+
+    const result = await userCollection.updateOne({ email }, updateDoc);
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const updatedUser = await userCollection.findOne({ email }, { projection: { _id: 0, password: 0 } });
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error("Error updating profile:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
     console.log("Connected");
   } finally {
   }
