@@ -64,8 +64,7 @@ const verifyFirebaseToken = async (req, res, next) => {
 async function run() {
   try {
     await client.connect();
-    const db = client.db("db_name");
-    const booksCollection = db.collection("books");
+    const db = client.db("scarletDB");
     const userCollection = db.collection("users");
 
     const verifyAdmin = async (req, res, next) => {
@@ -80,8 +79,48 @@ async function run() {
       }
     };
 
+    
+    app.post("/users", async (req, res) => {
+      const {
+        name,
+        email,
+        avatar,
+        bloodGroup,
+        district,
+        upazila,
+        role = "donor",
+        status = "active",
+      } = req.body;
 
+      if (!name || !email || !avatar || !bloodGroup || !district || !upazila) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
 
+      const existingUser = await userCollection.findOne({ email });
+      if (existingUser) {
+        return res.status(409).json({ message: "User already exists" });
+      }
+
+      const newUser = {
+        name,
+        email,
+        avatar,
+        bloodGroup,
+        district,
+        upazila,
+        role,
+        status,
+        createdAt: new Date(),
+      };
+
+      const result = await userCollection.insertOne(newUser);
+      res
+        .status(201)
+        .json({
+          message: "User registered successfully",
+          userId: result.insertedId,
+        });
+    });
 
     console.log("Connected");
   } finally {
