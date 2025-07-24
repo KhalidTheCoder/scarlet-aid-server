@@ -66,6 +66,7 @@ async function run() {
     await client.connect();
     const db = client.db("scarletDB");
     const userCollection = db.collection("users");
+    const donationRequestCollection = db.collection("donationRequests");
 
     const verifyAdmin = async (req, res, next) => {
       const user = await userCollection.findOne({
@@ -79,7 +80,6 @@ async function run() {
       }
     };
 
-    
     app.post("/users", async (req, res) => {
       const {
         name,
@@ -114,72 +114,113 @@ async function run() {
       };
 
       const result = await userCollection.insertOne(newUser);
-      res
-        .status(201)
-        .json({
-          message: "User registered successfully",
-          userId: result.insertedId,
-        });
+      res.status(201).json({
+        message: "User registered successfully",
+        userId: result.insertedId,
+      });
     });
 
+    app.post("/donation-requests", verifyFirebaseToken, async (req, res) => {
+      const email = req.firebaseUser.email;
+      const user = await userCollection.findOne({ email });
+
+      if (!user) return res.status(404).send({ message: "User not found" });
+      if (user.status !== "active")
+        return res
+          .status(403)
+          .send({ message: "Blocked users cannot create requests" });
+
+      const data = req.body;
+      if (
+        !data.recipientName ||
+        !data.recipientDistrict ||
+        !data.recipientUpazila ||
+        !data.hospitalName ||
+        !data.fullAddress ||
+        !data.bloodGroup ||
+        !data.donationDate ||
+        !data.donationTime ||
+        !data.requestMessage
+      ) {
+        return res.status(400).send({ message: "Missing fields" });
+      }
+
+      const newRequest = {
+        ...data,
+        requesterName: user.name,
+        requesterEmail: user.email,
+        status: "pending",
+        createdAt: new Date(),
+      };
+
+      const result = await donationRequestCollection.insertOne(newRequest);
+      res.send({ message: "Request created", id: result.insertedId });
+    });
 
     app.get("/users/profile", verifyFirebaseToken, async (req, res) => {
-  try {
-    const email = req.firebaseUser.email;
-    const user = await userCollection.findOne({ email }, { projection: { _id: 0 } });
+      try {
+        const email = req.firebaseUser.email;
+        const user = await userCollection.findOne(
+          { email },
+          { projection: { _id: 0 } }
+        );
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-    res.json(user);
-  } catch (error) {
-    res.status(500).json({ message: "Server error" });
-  }
-});
+        res.json(user);
+      } catch (error) {
+        res.status(500).json({ message: "Server error" });
+      }
+    });
 
+    app.get("/users/:email/role", verifyFirebaseToken, async (req, res) => {
+      const email = req.params.email;
+      const user = await userCollection.findOne({ email });
+      if (user) {
+        return res.send({ role: user.role });
+      }
+      res.status(404).send({ message: "User not found" });
+    });
 
     app.put("/users/profile", verifyFirebaseToken, async (req, res) => {
-  try {
-    const email = req.firebaseUser.email;
-    const {
-      name,
-      avatar,
-      district,
-      upazila,
-      bloodGroup,
-    } = req.body;
+      try {
+        const email = req.firebaseUser.email;
+        const { name, avatar, district, upazila, bloodGroup } = req.body;
 
-    if (!name || !district || !upazila || !bloodGroup) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
+        if (!name || !district || !upazila || !bloodGroup) {
+          return res.status(400).json({ message: "Missing required fields" });
+        }
 
-    const updateDoc = {
-      $set: {
-        name,
-        avatar,
-        district,
-        upazila,
-        bloodGroup,
-        updatedAt: new Date(),
-      },
-    };
+        const updateDoc = {
+          $set: {
+            name,
+            avatar,
+            district,
+            upazila,
+            bloodGroup,
+            updatedAt: new Date(),
+          },
+        };
 
-    const result = await userCollection.updateOne({ email }, updateDoc);
+        const result = await userCollection.updateOne({ email }, updateDoc);
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "User not found" });
-    }
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-    const updatedUser = await userCollection.findOne({ email }, { projection: { _id: 0, password: 0 } });
+        const updatedUser = await userCollection.findOne(
+          { email },
+          { projection: { _id: 0, password: 0 } }
+        );
 
-    res.json(updatedUser);
-  } catch (error) {
-    console.error("Error updating profile:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
+        res.json(updatedUser);
+      } catch (error) {
+        console.error("Error updating profile:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
 
     console.log("Connected");
   } finally {
