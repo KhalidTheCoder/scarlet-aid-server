@@ -157,56 +157,66 @@ async function run() {
       res.send({ message: "Request created", id: result.insertedId });
     });
 
-    app.get("/donation-requests/recent", verifyFirebaseToken, async (req, res) => {
-  try {
-    const email = req.query.email;
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
-    }
+    app.get(
+      "/donation-requests/recent",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const email = req.query.email;
+          if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+          }
 
-    const requests = await donationRequestCollection
-      .find({ requesterEmail: email })
-      .sort({ createdAt: -1 })
-      .limit(3)
-      .toArray();
+          const requests = await donationRequestCollection
+            .find({ requesterEmail: email })
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
 
-    res.json(requests);
-  } catch (error) {
-    console.error("Error fetching recent donation requests:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+          res.json(requests);
+        } catch (error) {
+          console.error("Error fetching recent donation requests:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
 
-    app.get("/donation-requests/my-requests", verifyFirebaseToken, async (req, res) => {
-  try {
-    const email = req.query.email;
-    const status = req.query.status; 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 5;
+    app.get(
+      "/donation-requests/my-requests",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const email = req.query.email;
+          const status = req.query.status;
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 5;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
-    }
+          if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+          }
 
-    const query = { requesterEmail: email };
-    if (status) query.status = status;
+          const query = { requesterEmail: email };
+          if (status) query.status = status;
 
-    const totalCount = await donationRequestCollection.countDocuments(query);
-    const totalPages = Math.ceil(totalCount / limit);
+          const totalCount = await donationRequestCollection.countDocuments(
+            query
+          );
+          const totalPages = Math.ceil(totalCount / limit);
 
-    const requests = await donationRequestCollection
-      .find(query)
-      .sort({ createdAt: -1 }) 
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .toArray();
+          const requests = await donationRequestCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .toArray();
 
-    res.json({ requests, totalPages });
-  } catch (error) {
-    console.error("Error fetching donation requests:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
+          res.json({ requests, totalPages });
+        } catch (error) {
+          console.error("Error fetching donation requests:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
 
     app.get("/users/profile", verifyFirebaseToken, async (req, res) => {
       try {
@@ -272,6 +282,79 @@ async function run() {
         res.status(500).json({ message: "Server error" });
       }
     });
+
+    app.patch(
+      "/donation-requests/:id",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
+
+          if (!["done", "canceled"].includes(status)) {
+            return res.status(400).json({ message: "Invalid status update" });
+          }
+
+          const request = await donationRequestCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!request)
+            return res.status(404).json({ message: "Request not found" });
+
+          if (request.requesterEmail !== req.firebaseUser.email) {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized to update this request" });
+          }
+
+          if (request.status !== "inprogress") {
+            return res
+              .status(400)
+              .json({ message: "Cannot update this request's status" });
+          }
+
+          await donationRequestCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status, updatedAt: new Date() } }
+          );
+
+          res.json({ message: `Request marked as ${status}` });
+        } catch (error) {
+          console.error("Error updating request:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
+    app.delete(
+      "/donation-requests/:id",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          const request = await donationRequestCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          if (!request)
+            return res.status(404).json({ message: "Request not found" });
+
+         
+          if (request.requesterEmail !== req.firebaseUser.email) {
+            return res
+              .status(403)
+              .json({ message: "Unauthorized to delete this request" });
+          }
+
+          await donationRequestCollection.deleteOne({ _id: new ObjectId(id) });
+
+          res.json({ message: "Donation request deleted successfully" });
+        } catch (error) {
+          console.error("Error deleting request:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
 
     console.log("Connected");
   } finally {
