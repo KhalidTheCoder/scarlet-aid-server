@@ -218,6 +218,97 @@ async function run() {
       }
     );
 
+    app.get("/users", verifyFirebaseToken, verifyAdmin, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const users = await userCollection
+          .find({}, { projection: { password: 0 } })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalUsers = await userCollection.countDocuments();
+        const totalPages = Math.ceil(totalUsers / limit);
+
+        res.json({ users, totalPages });
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.patch(
+      "/users/:id/status",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          if (!status || !["active", "blocked"].includes(status)) {
+            return res.status(400).json({ message: "Invalid status value" });
+          }
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status, updatedAt: new Date() } }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          res.json({ message: "User status updated successfully" });
+        } catch (error) {
+          console.error("Error updating user status:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
+    app.patch(
+      "/users/:id/role",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { role } = req.body;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid user ID" });
+          }
+
+          if (!role || !["donor", "volunteer", "admin"].includes(role)) {
+            return res.status(400).json({ message: "Invalid role value" });
+          }
+
+          const result = await userCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role, updatedAt: new Date() } }
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(404).json({ message: "User not found" });
+          }
+
+          res.json({ message: "User role updated successfully" });
+        } catch (error) {
+          console.error("Error updating user role:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
     app.get("/users/profile", verifyFirebaseToken, async (req, res) => {
       try {
         const email = req.firebaseUser.email;
