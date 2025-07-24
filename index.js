@@ -42,7 +42,7 @@ const client = new MongoClient(uri, {
 
 const verifyFirebaseToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
-  console.log("🚀 ~ verifyFirebaseToken ~ authHeader:", authHeader);
+  // console.log("🚀 ~ verifyFirebaseToken ~ authHeader:", authHeader);
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized: No token provided" });
@@ -283,45 +283,103 @@ async function run() {
       }
     });
 
-    app.patch(
-      "/donation-requests/:id",
+    app.get("/donation-requests/:id", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid request ID" });
+        }
+
+        const request = await donationRequestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!request)
+          return res.status(404).json({ message: "Request not found" });
+
+        if (request.requesterEmail !== req.firebaseUser.email) {
+          return res
+            .status(403)
+            .json({ message: "Unauthorized to access this request" });
+        }
+
+        res.json(request);
+      } catch (error) {
+        console.error("Error fetching donation request:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.put("/donation-requests/:id", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid request ID" });
+        }
+
+        const request = await donationRequestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!request)
+          return res.status(404).json({ message: "Request not found" });
+
+        if (request.requesterEmail !== req.firebaseUser.email) {
+          return res
+            .status(403)
+            .json({ message: "Unauthorized to update this request" });
+        }
+
+        const updateData = { ...req.body };
+        delete updateData._id;
+        delete updateData.status;
+
+        await donationRequestCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { ...updateData, updatedAt: new Date() } }
+        );
+
+        res.json({ message: "Donation request updated successfully" });
+      } catch (error) {
+        console.error("Error updating donation request:", error);
+        res.status(500).json({ message: error.message });
+      }
+    });
+
+    app.get(
+      "/admin/stats",
       verifyFirebaseToken,
+      verifyAdmin,
       async (req, res) => {
         try {
-          const { id } = req.params;
-          const { status } = req.body;
-
-          if (!["done", "canceled"].includes(status)) {
-            return res.status(400).json({ message: "Invalid status update" });
-          }
-
-          const request = await donationRequestCollection.findOne({
-            _id: new ObjectId(id),
+          const totalDonors = await userCollection.countDocuments({
+            role: "donor",
           });
-          if (!request)
-            return res.status(404).json({ message: "Request not found" });
 
-          if (request.requesterEmail !== req.firebaseUser.email) {
-            return res
-              .status(403)
-              .json({ message: "Unauthorized to update this request" });
-          }
+          const totalRequests =
+            await donationRequestCollection.estimatedDocumentCount();
 
-          if (request.status !== "inprogress") {
-            return res
-              .status(400)
-              .json({ message: "Cannot update this request's status" });
-          }
+          const donationsCollection = client
+            .db("scarletDB")
+            .collection("donations");
+          const totalFundsResult = await donationsCollection
+            .aggregate([
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$amount" },
+                },
+              },
+            ])
+            .toArray();
 
-          await donationRequestCollection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { status, updatedAt: new Date() } }
-          );
+          const totalFunds = totalFundsResult[0]?.total || 0;
 
-          res.json({ message: `Request marked as ${status}` });
+          res.send({ totalDonors, totalFunds, totalRequests });
         } catch (error) {
-          console.error("Error updating request:", error);
-          res.status(500).json({ message: "Server error" });
+          console.error("Error fetching admin stats:", error);
+          res.status(500).send({ message: "Internal server error" });
         }
       }
     );
@@ -339,7 +397,6 @@ async function run() {
           if (!request)
             return res.status(404).json({ message: "Request not found" });
 
-         
           if (request.requesterEmail !== req.firebaseUser.email) {
             return res
               .status(403)
