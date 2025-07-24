@@ -157,6 +157,57 @@ async function run() {
       res.send({ message: "Request created", id: result.insertedId });
     });
 
+    app.get("/donation-requests/recent", verifyFirebaseToken, async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const requests = await donationRequestCollection
+      .find({ requesterEmail: email })
+      .sort({ createdAt: -1 })
+      .limit(3)
+      .toArray();
+
+    res.json(requests);
+  } catch (error) {
+    console.error("Error fetching recent donation requests:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+    app.get("/donation-requests/my-requests", verifyFirebaseToken, async (req, res) => {
+  try {
+    const email = req.query.email;
+    const status = req.query.status; 
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const query = { requesterEmail: email };
+    if (status) query.status = status;
+
+    const totalCount = await donationRequestCollection.countDocuments(query);
+    const totalPages = Math.ceil(totalCount / limit);
+
+    const requests = await donationRequestCollection
+      .find(query)
+      .sort({ createdAt: -1 }) 
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+
+    res.json({ requests, totalPages });
+  } catch (error) {
+    console.error("Error fetching donation requests:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
     app.get("/users/profile", verifyFirebaseToken, async (req, res) => {
       try {
         const email = req.firebaseUser.email;
