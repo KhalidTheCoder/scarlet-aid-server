@@ -298,6 +298,32 @@ async function run() {
       }
     );
 
+    app.get("/donation-requests/public", async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+
+        const query = { status: "pending" };
+
+        const totalCount = await donationRequestCollection.countDocuments(
+          query
+        );
+        const totalPages = Math.ceil(totalCount / limit);
+
+        const requests = await donationRequestCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .toArray();
+
+        res.json({ requests, totalPages });
+      } catch (error) {
+        console.error("Error fetching public donation requests:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
     app.patch(
       "/users/:id/status",
       verifyFirebaseToken,
