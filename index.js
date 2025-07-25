@@ -773,19 +773,64 @@ async function run() {
       }
     });
 
-    app.get("/blogs", verifyFirebaseToken, async (req, res) => {
-      try {
-        const { status } = req.query;
-        const filter = {};
-        if (status) filter.status = status;
+    app.get(
+      "/blogs",
+      verifyFirebaseToken,
+      verifyAdminOrVolunteer,
+      async (req, res) => {
+        try {
+          const { status } = req.query;
+          const filter = {};
+          if (status) filter.status = status;
 
+          const blogs = await blogCollection
+            .find(filter)
+            .sort({ createdAt: -1 })
+            .toArray();
+          res.json(blogs);
+        } catch (error) {
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
+
+    app.get("/blogs/public/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).json({ message: "Invalid blog ID" });
+        }
+
+        const blog = await blogCollection.findOne({
+          _id: new ObjectId(id),
+          status: "published",
+        });
+
+        if (!blog) {
+          return res.status(404).json({ message: "Blog not found" });
+        }
+
+        res.json(blog);
+      } catch (error) {
+        console.error("Error fetching blog:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.get("/blogs/public", async (req, res) => {
+      try {
         const blogs = await blogCollection
-          .find(filter)
+          .find({ status: "published" })
           .sort({ createdAt: -1 })
           .toArray();
+
         res.json(blogs);
       } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        console.error("Error fetching published blogs:", error);
+        res.status(500).json({ message: "Server error" });
       }
     });
 
