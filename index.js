@@ -81,6 +81,29 @@ async function run() {
       }
     };
 
+    const verifyAdminOrVolunteer = async (req, res, next) => {
+      try {
+        const userEmail = req.firebaseUser?.email;
+
+        if (!userEmail) {
+          return res
+            .status(401)
+            .send({ msg: "Unauthorized: No user email found" });
+        }
+
+        const user = await userCollection.findOne({ email: userEmail });
+
+        if (!user || (user.role !== "admin" && user.role !== "volunteer")) {
+          return res.status(403).send({ msg: "Forbidden: Access denied" });
+        }
+
+        next();
+      } catch (error) {
+        console.error("Error in verifyAdminOrVolunteer middleware:", error);
+        res.status(500).send({ msg: "Internal server error" });
+      }
+    };
+
     app.post("/users", async (req, res) => {
       const {
         name,
@@ -245,7 +268,7 @@ async function run() {
     app.get(
       "/donation-requests",
       verifyFirebaseToken,
-      verifyAdmin,
+      verifyAdminOrVolunteer,
       async (req, res) => {
         try {
           const { status } = req.query;
@@ -487,24 +510,27 @@ async function run() {
         const { status } = req.body;
 
         const validStatuses = ["pending", "inprogress", "done", "canceled"];
-        if (!ObjectId.isValid(id))
-          return res.status(400).json({ message: "Invalid ID" });
-        if (!validStatuses.includes(status))
-          return res.status(400).json({ message: "Invalid status" });
+        if (!ObjectId.isValid(id) || !validStatuses.includes(status)) {
+          return res.status(400).json({ message: "Invalid ID or status" });
+        }
 
-        const request = await donationRequestCollection.findOne({
-          _id: new ObjectId(id),
-        });
-        if (!request)
-          return res.status(404).json({ message: "Request not found" });
+        const [request, user] = await Promise.all([
+          donationRequestCollection.findOne({ _id: new ObjectId(id) }),
+          userCollection.findOne({ email: req.firebaseUser.email }),
+        ]);
 
-        const user = await userCollection.findOne({
-          email: req.firebaseUser.email,
-        });
-        if (!user) return res.status(401).json({ message: "User not found" });
+        if (!request || !user) {
+          return res.status(404).json({ message: "Request or user not found" });
+        }
 
-        if (user.role !== "admin" && request.requesterEmail !== user.email)
+        const allowed =
+          user.role === "admin" ||
+          user.role === "volunteer" ||
+          request.requesterEmail === user.email;
+
+        if (!allowed) {
           return res.status(403).json({ message: "Unauthorized" });
+        }
 
         await donationRequestCollection.updateOne(
           { _id: new ObjectId(id) },
@@ -518,7 +544,7 @@ async function run() {
     app.get(
       "/admin/stats",
       verifyFirebaseToken,
-      verifyAdmin,
+      verifyAdminOrVolunteer,
       async (req, res) => {
         try {
           const totalDonors = await userCollection.countDocuments({
@@ -588,126 +614,120 @@ async function run() {
       }
     );
 
+    app.post("/blogs", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { title, thumbnail, content } = req.body;
 
+        if (!title || !thumbnail || !content) {
+          return res.status(400).json({ message: "All fields are required" });
+        }
 
+        const user = await userCollection.findOne({
+          email: req.firebaseUser.email,
+        });
+        if (!user) return res.status(404).json({ message: "User not found" });
 
+        const newBlog = {
+          title,
+          thumbnail,
+          content,
+          author: {
+            name: user.name,
+            email: user.email,
+            role: user.role,
+          },
+          status: "draft",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
+        const result = await blogCollection.insertOne(newBlog);
+        res
+          .status(201)
+          .json({
+            message: "Blog created successfully",
+            id: result.insertedId,
+          });
+      } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
 
+    app.get("/blogs", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { status } = req.query;
+        const filter = {};
+        if (status) filter.status = status; // "draft" or "published"
 
+        const blogs = await blogCollection
+          .find(filter)
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.json(blogs);
+      } catch (error) {
+        res.status(500).json({ message: "Server error", error: error.message });
+      }
+    });
 
+    app.patch(
+      "/blogs/:id/status",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { status } = req.body;
 
+          if (!ObjectId.isValid(id))
+            return res.status(400).json({ message: "Invalid blog ID" });
+          if (!["draft", "published"].includes(status))
+            return res.status(400).json({ message: "Invalid status" });
 
-  app.post("/blogs", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { title, thumbnail, content } = req.body;
+          const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+          if (!blog) return res.status(404).json({ message: "Blog not found" });
 
-    if (!title || !thumbnail || !content) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
+          await blogCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { status, updatedAt: new Date() } }
+          );
 
-    const user = await userCollection.findOne({ email: req.firebaseUser.email });
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const newBlog = {
-      title,
-      thumbnail,
-      content,
-      author: {
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-      status: "draft", 
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await blogCollection.insertOne(newBlog);
-    res.status(201).json({ message: "Blog created successfully", id: result.insertedId });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
-
-
-
-
-
-app.get("/blogs", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { status } = req.query;
-    const filter = {};
-    if (status) filter.status = status; // "draft" or "published"
-
-    const blogs = await blogCollection.find(filter).sort({ createdAt: -1 }).toArray();
-    res.json(blogs);
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
-
-
-
-
-
-
-app.patch("/blogs/:id/status", verifyFirebaseToken, verifyAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
-
-    if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid blog ID" });
-    if (!["draft", "published"].includes(status))
-      return res.status(400).json({ message: "Invalid status" });
-
-    const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
-    if (!blog) return res.status(404).json({ message: "Blog not found" });
-
-    await blogCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status, updatedAt: new Date() } }
+          res.json({
+            message: `Blog ${
+              status === "published" ? "published" : "unpublished"
+            } successfully`,
+          });
+        } catch (error) {
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
     );
 
-    res.json({ message: `Blog ${status === "published" ? "published" : "unpublished"} successfully` });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
+    app.delete(
+      "/blogs/:id",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
 
+          if (!ObjectId.isValid(id))
+            return res.status(400).json({ message: "Invalid blog ID" });
 
-app.delete("/blogs/:id", verifyFirebaseToken, verifyAdmin, async (req, res) => {
-  try {
-    const { id } = req.params;
+          const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
+          if (!blog) return res.status(404).json({ message: "Blog not found" });
 
-    if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid blog ID" });
+          await blogCollection.deleteOne({ _id: new ObjectId(id) });
 
-    const blog = await blogCollection.findOne({ _id: new ObjectId(id) });
-    if (!blog) return res.status(404).json({ message: "Blog not found" });
-
-    await blogCollection.deleteOne({ _id: new ObjectId(id) });
-
-    res.json({ message: "Blog deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-});
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+          res.json({ message: "Blog deleted successfully" });
+        } catch (error) {
+          res
+            .status(500)
+            .json({ message: "Server error", error: error.message });
+        }
+      }
+    );
 
     console.log("Connected");
   } finally {
