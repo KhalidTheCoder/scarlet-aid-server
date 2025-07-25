@@ -241,6 +241,39 @@ async function run() {
       }
     });
 
+    app.get(
+      "/donation-requests",
+      verifyFirebaseToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { status } = req.query;
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 10;
+
+          const query = {};
+          if (status) query.status = status;
+
+          const totalCount = await donationRequestCollection.countDocuments(
+            query
+          );
+          const totalPages = Math.ceil(totalCount / limit);
+
+          const requests = await donationRequestCollection
+            .find(query)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .toArray();
+
+          res.json({ requests, totalPages });
+        } catch (error) {
+          console.error("Error fetching all donation requests:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
     app.patch(
       "/users/:id/status",
       verifyFirebaseToken,
@@ -389,12 +422,6 @@ async function run() {
         if (!request)
           return res.status(404).json({ message: "Request not found" });
 
-        if (request.requesterEmail !== req.firebaseUser.email) {
-          return res
-            .status(403)
-            .json({ message: "Unauthorized to access this request" });
-        }
-
         res.json(request);
       } catch (error) {
         console.error("Error fetching donation request:", error);
@@ -413,10 +440,23 @@ async function run() {
         const request = await donationRequestCollection.findOne({
           _id: new ObjectId(id),
         });
-        if (!request)
-          return res.status(404).json({ message: "Request not found" });
 
-        if (request.requesterEmail !== req.firebaseUser.email) {
+        if (!request) {
+          return res.status(404).json({ message: "Request not found" });
+        }
+
+        const currentUser = await userCollection.findOne({
+          email: req.firebaseUser.email,
+        });
+
+        if (!currentUser) {
+          return res.status(401).json({ message: "User not found" });
+        }
+
+        const isOwner = request.requesterEmail === req.firebaseUser.email;
+        const isAdmin = currentUser.role === "admin";
+
+        if (!isOwner && !isAdmin) {
           return res
             .status(403)
             .json({ message: "Unauthorized to update this request" });
@@ -437,6 +477,42 @@ async function run() {
         res.status(500).json({ message: error.message });
       }
     });
+
+    app.patch(
+      "/donation-requests/:id/status",
+      verifyFirebaseToken,
+      async (req, res) => {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        const validStatuses = ["pending", "inprogress", "done", "canceled"];
+        if (!ObjectId.isValid(id))
+          return res.status(400).json({ message: "Invalid ID" });
+        if (!validStatuses.includes(status))
+          return res.status(400).json({ message: "Invalid status" });
+
+        const request = await donationRequestCollection.findOne({
+          _id: new ObjectId(id),
+        });
+        if (!request)
+          return res.status(404).json({ message: "Request not found" });
+
+        const user = await userCollection.findOne({
+          email: req.firebaseUser.email,
+        });
+        if (!user) return res.status(401).json({ message: "User not found" });
+
+        if (user.role !== "admin" && request.requesterEmail !== user.email)
+          return res.status(403).json({ message: "Unauthorized" });
+
+        await donationRequestCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, updatedAt: new Date() } }
+        );
+
+        res.json({ message: "Status updated successfully" });
+      }
+    );
 
     app.get(
       "/admin/stats",
@@ -482,13 +558,21 @@ async function run() {
         try {
           const { id } = req.params;
 
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid request ID" });
+          }
+
           const request = await donationRequestCollection.findOne({
             _id: new ObjectId(id),
           });
           if (!request)
             return res.status(404).json({ message: "Request not found" });
 
-          if (request.requesterEmail !== req.firebaseUser.email) {
+          const userEmail = req.firebaseUser.email;
+          const user = await userCollection.findOne({ email: userEmail });
+
+          
+          if (user.role !== "admin" && request.requesterEmail !== userEmail) {
             return res
               .status(403)
               .json({ message: "Unauthorized to delete this request" });
