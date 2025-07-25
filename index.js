@@ -541,6 +541,102 @@ async function run() {
       }
     );
 
+    app.get("/donors/search", async (req, res) => {
+      try {
+        const { bloodGroup, district, upazila } = req.query;
+
+        const validBloodGroups = [
+          "A+",
+          "A-",
+          "B+",
+          "B-",
+          "AB+",
+          "AB-",
+          "O+",
+          "O-",
+        ];
+        if (bloodGroup && !validBloodGroups.includes(bloodGroup)) {
+          return res.status(400).json({ message: "Invalid blood group" });
+        }
+
+        const query = { role: "donor", status: "active" };
+
+        if (bloodGroup) query.bloodGroup = bloodGroup;
+        if (district) query.district = district;
+        if (upazila) query.upazila = upazila;
+
+        const donors = await userCollection.find(query).toArray();
+
+        res.json(donors);
+      } catch (error) {
+        console.error("Error searching donors:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    app.patch(
+      "/donation-requests/:id/donate",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { donorName, donorEmail } = req.body;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid request ID" });
+          }
+
+          if (!donorName || !donorEmail) {
+            return res
+              .status(400)
+              .json({ message: "Donor name and email are required" });
+          }
+
+          const [request, user] = await Promise.all([
+            donationRequestCollection.findOne({ _id: new ObjectId(id) }),
+            userCollection.findOne({ email: req.firebaseUser.email }),
+          ]);
+
+          if (!request || !user) {
+            return res
+              .status(404)
+              .json({ message: "Request or user not found" });
+          }
+
+          // Only allow if request is still pending
+          if (request.status !== "pending") {
+            return res.status(400).json({
+              message: "This request is no longer available for donation",
+            });
+          }
+
+          // Prevent donating to own request
+          if (request.requesterEmail === user.email) {
+            return res
+              .status(403)
+              .json({ message: "You cannot donate to your own request" });
+          }
+
+          await donationRequestCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                donorName,
+                donorEmail,
+                status: "inprogress",
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          res.json({ message: "Donation confirmed successfully" });
+        } catch (error) {
+          console.error("Error confirming donation:", error);
+          res.status(500).json({ message: "Server error" });
+        }
+      }
+    );
+
     app.get(
       "/admin/stats",
       verifyFirebaseToken,
@@ -642,12 +738,10 @@ async function run() {
         };
 
         const result = await blogCollection.insertOne(newBlog);
-        res
-          .status(201)
-          .json({
-            message: "Blog created successfully",
-            id: result.insertedId,
-          });
+        res.status(201).json({
+          message: "Blog created successfully",
+          id: result.insertedId,
+        });
       } catch (error) {
         res.status(500).json({ message: "Server error", error: error.message });
       }
@@ -657,7 +751,7 @@ async function run() {
       try {
         const { status } = req.query;
         const filter = {};
-        if (status) filter.status = status; // "draft" or "published"
+        if (status) filter.status = status;
 
         const blogs = await blogCollection
           .find(filter)
