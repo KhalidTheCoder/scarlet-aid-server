@@ -672,6 +672,11 @@ async function run() {
       verifyAdminOrVolunteer,
       async (req, res) => {
         try {
+          const db = client.db("scarletDB");
+          const userCollection = db.collection("users");
+          const donationRequestCollection = db.collection("donationRequests");
+          const fundingCollection = db.collection("funding");
+
           const totalDonors = await userCollection.countDocuments({
             role: "donor",
           });
@@ -679,10 +684,7 @@ async function run() {
           const totalRequests =
             await donationRequestCollection.estimatedDocumentCount();
 
-          const donationsCollection = client
-            .db("scarletDB")
-            .collection("donations");
-          const totalFundsResult = await donationsCollection
+          const totalFundsResult = await fundingCollection
             .aggregate([
               {
                 $group: {
@@ -695,10 +697,14 @@ async function run() {
 
           const totalFunds = totalFundsResult[0]?.total || 0;
 
-          res.send({ totalDonors, totalFunds, totalRequests });
+          res.status(200).json({
+            totalDonors,
+            totalFunds,
+            totalRequests,
+          });
         } catch (error) {
           console.error("Error fetching admin stats:", error);
-          res.status(500).send({ message: "Internal server error" });
+          res.status(500).json({ message: "Internal server error" });
         }
       }
     );
