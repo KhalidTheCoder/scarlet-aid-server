@@ -1,3 +1,5 @@
+const dotenv = require("dotenv");
+dotenv.config();
 const express = require("express");
 const cors = require("cors");
 
@@ -7,8 +9,8 @@ const {
   ObjectId,
   ChangeStream,
 } = require("mongodb");
-const dotenv = require("dotenv");
-dotenv.config();
+
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 var admin = require("firebase-admin");
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
@@ -68,6 +70,7 @@ async function run() {
     const userCollection = db.collection("users");
     const donationRequestCollection = db.collection("donationRequests");
     const blogCollection = db.collection("blogs");
+    const fundingCollection = db.collection("funding");
 
     const verifyAdmin = async (req, res, next) => {
       const user = await userCollection.findOne({
@@ -893,6 +896,90 @@ async function run() {
         }
       }
     );
+
+    app.post(
+      "/create-payment-intent",
+      verifyFirebaseToken,
+      async (req, res) => {
+        try {
+          const { amount } = req.body;
+
+          if (!amount || amount < 1) {
+            return res.status(400).json({ message: "Invalid amount" });
+          }
+
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount,
+            currency: "usd",
+            payment_method_types: ["card"],
+          });
+
+          res.json({ clientSecret: paymentIntent.client_secret });
+        } catch (error) {
+          console.error("Create payment intent error:", error);
+          res.status(500).json({ message: "Failed to create payment intent" });
+        }
+      }
+    );
+
+    app.post("/funding", verifyFirebaseToken, async (req, res) => {
+      try {
+        const { amount } = req.body;
+        const userEmail = req.firebaseUser.email;
+
+        if (!amount || amount < 1) {
+          return res.status(400).json({ message: "Invalid amount" });
+        }
+
+        const user = await userCollection.findOne({ email: userEmail });
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const newFunding = {
+          userId: user._id,
+          userName: user.name,
+          userEmail: user.email,
+          amount,
+          date: new Date(),
+        };
+
+        await fundingCollection.insertOne(newFunding);
+
+        res.status(201).json({ message: "Funding recorded successfully" });
+      } catch (error) {
+        console.error("Save funding error:", error);
+        res.status(500).json({ message: "Failed to save funding record" });
+      }
+    });
+
+    app.get("/funding", verifyFirebaseToken, async (req, res) => {
+      try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 5;
+
+        const skip = (page - 1) * limit;
+
+        const totalRecords = await fundingCollection.countDocuments();
+
+        const funds = await fundingCollection
+          .find({})
+          .sort({ date: -1 })
+          .skip(skip)
+          .limit(limit)
+          .toArray();
+
+        const totalPages = Math.ceil(totalRecords / limit);
+
+        res.status(200).json({
+          funds,
+          totalPages,
+        });
+      } catch (error) {
+        console.error("Error fetching funding records:", error);
+        res.status(500).json({ message: "Failed to fetch funding records" });
+      }
+    });
 
     console.log("Connected");
   } finally {
