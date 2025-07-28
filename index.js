@@ -54,7 +54,7 @@ const verifyFirebaseToken = async (req, res, next) => {
 
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
-    req.firebaseUser = decodedToken; // You can access user info like uid, email, etc.
+    req.firebaseUser = decodedToken;
     next();
   } catch (error) {
     return res
@@ -65,7 +65,7 @@ const verifyFirebaseToken = async (req, res, next) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const db = client.db("scarletDB");
     const userCollection = db.collection("users");
     const donationRequestCollection = db.collection("donationRequests");
@@ -632,14 +632,12 @@ async function run() {
               .json({ message: "Request or user not found" });
           }
 
-          // Only allow if request is still pending
           if (request.status !== "pending") {
             return res.status(400).json({
               message: "This request is no longer available for donation",
             });
           }
 
-          // Prevent donating to own request
           if (request.requesterEmail === user.email) {
             return res
               .status(403)
@@ -672,11 +670,6 @@ async function run() {
       verifyAdminOrVolunteer,
       async (req, res) => {
         try {
-          const db = client.db("scarletDB");
-          const userCollection = db.collection("users");
-          const donationRequestCollection = db.collection("donationRequests");
-          const fundingCollection = db.collection("funding");
-
           const totalDonors = await userCollection.countDocuments({
             role: "donor",
           });
