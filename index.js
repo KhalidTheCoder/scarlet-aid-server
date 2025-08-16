@@ -308,6 +308,13 @@ async function run() {
 
         const query = { status: "pending" };
 
+        if (req.query.bloodGroup) {
+          query.bloodGroup = req.query.bloodGroup;
+        }
+        if (req.query.district) {
+          query.recipientDistrict = req.query.district;
+        }
+
         const totalCount = await donationRequestCollection.countDocuments(
           query
         );
